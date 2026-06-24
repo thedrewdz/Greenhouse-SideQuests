@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="../TempTest.Application/TempTest.Application.csproj" />
+  <Project Path="../TempTest.Application.Tests/TempTest.Application.Tests.csproj" />
+  <Project Path="../TempTest.Domain/TempTest.Domain.csproj" />
+  <Project Path="../TempTest.Infrastructure/TempTest.Infrastructure.csproj" />
+  <Project Path="TempTest.Functions/TempTest.Functions.csproj" />
+</Solution>
