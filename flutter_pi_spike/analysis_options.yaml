@@ -1,0 +1,7 @@
+include: package:flutter_lints/flutter.yaml
+
+# Spike-local analyzer config. Kept minimal on purpose - this is a throwaway
+# experiment, not production code, so the production CLEAN/bloc conventions
+# do not apply here.
+linter:
+  rules:

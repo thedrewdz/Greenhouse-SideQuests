@@ -1,0 +1,21 @@
+# Miscellaneous
+*.class
+*.log
+*.swp
+.DS_Store
+
+# Flutter/Dart/Pub related
+**/doc/api/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+
+# Symbolication / obfuscation
+app.*.symbols
+app.*.map.json
+
+# flutterpi_tool build output
+/build/flutter_assets/
