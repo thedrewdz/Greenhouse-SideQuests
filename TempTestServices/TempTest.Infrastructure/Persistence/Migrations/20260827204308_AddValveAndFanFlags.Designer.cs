@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using TempTest.Infrastructure.Persistence;
 
@@ -11,9 +12,11 @@ using TempTest.Infrastructure.Persistence;
 namespace TempTest.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(TempTestDbContext))]
-    partial class TempTestDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260827204308_AddValveAndFanFlags")]
+    partial class AddValveAndFanFlags
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

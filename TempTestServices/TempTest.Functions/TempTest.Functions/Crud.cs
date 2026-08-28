@@ -87,6 +87,8 @@ public sealed class Crud(IRecordSensorData recordSensorData, ILogger<Crud> logge
         command = new RecordSensorDataCommand(
             request.Temperature.Value,
             request.Humidity.Value,
+            request.ValveOn ?? false,
+            request.FanOn ?? false,
             request.Timestamp.Value);
 
         error = string.Empty;
@@ -107,6 +109,8 @@ public sealed class Crud(IRecordSensorData recordSensorData, ILogger<Crud> logge
     private sealed record SensorDataRequest(
         decimal? Temperature,
         decimal? Humidity,
+        bool? ValveOn,
+        bool? FanOn,
         DateTimeOffset? Timestamp);
 
     private sealed record SensorDataResponse(

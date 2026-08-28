@@ -6,11 +6,13 @@ public sealed class SensorData
     {
     }
 
-    private SensorData(decimal temperature, decimal humidity, DateTimeOffset timestamp, DateTimeOffset createdAtUtc)
+    private SensorData(decimal temperature, decimal humidity, bool valveOn, bool fanOn, DateTimeOffset timestamp, DateTimeOffset createdAtUtc)
     {
         Id = Guid.NewGuid();
         Temperature = temperature;
         Humidity = humidity;
+        ValveOn = valveOn;
+        FanOn = fanOn;
         Timestamp = timestamp;
         CreatedAtUtc = createdAtUtc;
     }
@@ -21,11 +23,15 @@ public sealed class SensorData
 
     public decimal Humidity { get; private set; }
 
+    public bool ValveOn { get; private set; }
+
+    public bool FanOn { get; private set; }
+
     public DateTimeOffset Timestamp { get; private set; }
 
     public DateTimeOffset CreatedAtUtc { get; private set; }
 
-    public static SensorData Create(decimal temperature, decimal humidity, DateTimeOffset timestamp, DateTimeOffset createdAtUtc)
+    public static SensorData Create(decimal temperature, decimal humidity, bool valveOn, bool fanOn, DateTimeOffset timestamp, DateTimeOffset createdAtUtc)
     {
         if (humidity is < 0 or > 100)
         {
@@ -42,6 +48,6 @@ public sealed class SensorData
             throw new ArgumentException("Created timestamp is required.", nameof(createdAtUtc));
         }
 
-        return new SensorData(temperature, humidity, timestamp, createdAtUtc);
+        return new SensorData(temperature, humidity, valveOn, fanOn, timestamp, createdAtUtc);
     }
 }

@@ -9,6 +9,8 @@ public sealed class RecordSensorData(ISensorDataRepository repository) : IRecord
         Domain.SensorData.SensorData sensorData = Domain.SensorData.SensorData.Create(
             command.Temperature,
             command.Humidity,
+            command.ValveOn,
+            command.FanOn,
             command.Timestamp,
             DateTimeOffset.UtcNow);
 

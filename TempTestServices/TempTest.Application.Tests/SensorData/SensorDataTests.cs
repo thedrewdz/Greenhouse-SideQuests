@@ -11,6 +11,8 @@ public sealed class SensorDataTests
             Domain.SensorData.SensorData.Create(
                 12.3m,
                 Convert.ToDecimal(humidity),
+                false,
+                false,
                 DateTimeOffset.Parse("2026-06-23T16:45:00Z"),
                 DateTimeOffset.UtcNow));
     }
@@ -23,11 +25,15 @@ public sealed class SensorDataTests
         Domain.SensorData.SensorData sensorData = Domain.SensorData.SensorData.Create(
             12.3m,
             64.1m,
+            true,
+            false,
             timestamp,
             DateTimeOffset.UtcNow);
 
         Assert.Equal(12.3m, sensorData.Temperature);
         Assert.Equal(64.1m, sensorData.Humidity);
+        Assert.True(sensorData.ValveOn);
+        Assert.False(sensorData.FanOn);
         Assert.Equal(timestamp, sensorData.Timestamp);
         Assert.NotEqual(Guid.Empty, sensorData.Id);
     }

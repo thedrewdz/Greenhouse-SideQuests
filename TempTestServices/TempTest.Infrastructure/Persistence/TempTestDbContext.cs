@@ -25,6 +25,14 @@ public sealed class TempTestDbContext(DbContextOptions<TempTestDbContext> option
                 .HasColumnType("decimal(5, 2)")
                 .IsRequired();
 
+            entity.Property(sensorData => sensorData.ValveOn)
+                .IsRequired()
+                .HasDefaultValue(false);
+
+            entity.Property(sensorData => sensorData.FanOn)
+                .IsRequired()
+                .HasDefaultValue(false);
+
             entity.Property(sensorData => sensorData.Timestamp)
                 .IsRequired();
 

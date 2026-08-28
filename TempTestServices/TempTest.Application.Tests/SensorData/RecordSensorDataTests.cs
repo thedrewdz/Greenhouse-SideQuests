@@ -12,7 +12,7 @@ public sealed class RecordSensorDataTests
         DateTimeOffset timestamp = DateTimeOffset.Parse("2026-06-23T16:45:00Z");
 
         RecordSensorDataResult result = await recorder.RecordAsync(
-            new RecordSensorDataCommand(12.3m, 64.1m, timestamp),
+            new RecordSensorDataCommand(12.3m, 64.1m, true, true, timestamp),
             CancellationToken.None);
 
         Assert.NotEqual(Guid.Empty, result.Id);
@@ -22,6 +22,8 @@ public sealed class RecordSensorDataTests
         Assert.Equal(result.Id, saved.Id);
         Assert.Equal(12.3m, saved.Temperature);
         Assert.Equal(64.1m, saved.Humidity);
+        Assert.True(saved.ValveOn);
+        Assert.True(saved.FanOn);
         Assert.Equal(timestamp, saved.Timestamp);
     }
 
