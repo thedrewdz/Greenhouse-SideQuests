@@ -42,6 +42,11 @@
 #define READ_INTERVAL_MS  15000
 #define UPLOAD_INTERVAL_MS 60000
 
+// Drives the cooldown-blink LED update. Half of this is the on/off duration,
+// so the LED completes one full on-off cycle every LED_BLINK_PERIOD_MS.
+#define LED_BLINK_PERIOD_MS 1000
+#define TICK_MS (LED_BLINK_PERIOD_MS / 2)
+
 // All temperatures are Celsius. Humidity is relative humidity (RH), as a percentage.
 #define TEMP_VALVE_ON_C   25.0f
 #define TEMP_VALVE_OFF_C  23.0f
@@ -82,16 +87,34 @@ static int64_t nowMs(void)
 	return esp_timer_get_time() / 1000;
 }
 
-static void setFan(bool on)
+static void setFanRelay(bool on)
 {
 	gpio_set_level(PIN_RELAY_FAN, on);
-	gpio_set_level(PIN_LED_FAN, on);
 }
 
-static void setValve(bool on)
+static void setValveRelay(bool on)
 {
 	gpio_set_level(PIN_RELAY_VALVE, on);
-	gpio_set_level(PIN_LED_VALVE, on);
+}
+
+// Called every TICK_MS. Solid on/off follows the relay outside of cooldown;
+// during cooldown the relay is forced off and the LED blinks at 1Hz instead,
+// so a locked-out actuator is visually obvious without a serial monitor.
+static void updateActuatorLeds(int64_t now)
+{
+	bool blinkPhase = ((now / TICK_MS) % 2) == 0;
+
+	if (g_valveCooldownUntilMs != 0) {
+		gpio_set_level(PIN_LED_VALVE, blinkPhase);
+	} else {
+		gpio_set_level(PIN_LED_VALVE, g_valveOn);
+	}
+
+	if (g_fanCooldownUntilMs != 0) {
+		gpio_set_level(PIN_LED_FAN, blinkPhase);
+	} else {
+		gpio_set_level(PIN_LED_FAN, g_fanOn);
+	}
 }
 
 static esp_err_t initOutputs(void)
@@ -110,8 +133,10 @@ static esp_err_t initOutputs(void)
 		return err;
 	}
 
-	setFan(false);
-	setValve(false);
+	setFanRelay(false);
+	setValveRelay(false);
+	gpio_set_level(PIN_LED_FAN, 0);
+	gpio_set_level(PIN_LED_VALVE, 0);
 	return ESP_OK;
 }
 
@@ -270,7 +295,7 @@ static void updateValve(float temp)
 	if (g_valveOn) {
 		if (temp <= TEMP_VALVE_OFF_C) {
 			bool ranFullDuration = (now - g_valveOnSinceMs) >= ACTUATOR_MAX_ON_MS;
-			setValve(false);
+			setValveRelay(false);
 			g_valveOn = false;
 			if (ranFullDuration) {
 				g_valveCooldownUntilMs = now + ACTUATOR_COOLDOWN_MS;
@@ -280,7 +305,7 @@ static void updateValve(float temp)
 			}
 		}
 	} else if (temp > TEMP_VALVE_ON_C) {
-		setValve(true);
+		setValveRelay(true);
 		g_valveOn = true;
 		g_valveOnSinceMs = now;
 		ESP_LOGI(TAG, "Temperature %.1fC > %.1fC; opening valve", temp, TEMP_VALVE_ON_C);
@@ -304,17 +329,17 @@ static void updateFan(float rh)
 
 	if (g_fanOn) {
 		if (rh <= RH_FAN_OFF_PCT) {
-			setFan(false);
+			setFanRelay(false);
 			g_fanOn = false;
 			ESP_LOGI(TAG, "Humidity %.1f%% <= %.1f%%; stopping fan", rh, RH_FAN_OFF_PCT);
 		} else if ((now - g_fanOnSinceMs) >= ACTUATOR_MAX_ON_MS) {
-			setFan(false);
+			setFanRelay(false);
 			g_fanOn = false;
 			g_fanCooldownUntilMs = now + ACTUATOR_COOLDOWN_MS;
 			ESP_LOGI(TAG, "Fan exceeded max on-time without reaching %.1f%%RH; stopping and starting 10 min cooldown", RH_FAN_OFF_PCT);
 		}
 	} else if (rh > RH_FAN_ON_PCT) {
-		setFan(true);
+		setFanRelay(true);
 		g_fanOn = true;
 		g_fanOnSinceMs = now;
 		ESP_LOGI(TAG, "Humidity %.1f%% > %.1f%%; starting fan", rh, RH_FAN_ON_PCT);
@@ -562,37 +587,45 @@ void app_main(void)
 	float lastTemp = 0.0f;
 	float lastRh = 0.0f;
 	bool haveReading = false;
+	int64_t lastReadMs = 0;
 	int64_t lastUploadMs = 0;
 
 	while (true) {
-		float temp = 0.0f;
-		float rh   = 0.0f;
-
-		err = readSensor(addr, &temp, &rh);
-		if (err == ESP_OK) {
-			printf("{\"temperature\": %.1f, \"humidity\": %.1f}\n", temp, rh);
-			updateValve(temp);
-			updateFan(rh);
-			lastTemp = temp;
-			lastRh = rh;
-			haveReading = true;
-		} else {
-			ESP_LOGW(TAG, "Read failed: %s", esp_err_to_name(err));
-		}
-
 		int64_t now = nowMs();
-		if (haveReading && (now - lastUploadMs) >= UPLOAD_INTERVAL_MS) {
-			if (wifiConnected()) {
-				err = postReading(lastTemp, lastRh, g_valveOn, g_fanOn);
-				if (err != ESP_OK) {
-					ESP_LOGW(TAG, "Upload failed: %s", esp_err_to_name(err));
-				}
+
+		// Runs every tick so cooldown LEDs keep blinking between sensor reads.
+		updateActuatorLeds(now);
+
+		if ((now - lastReadMs) >= READ_INTERVAL_MS) {
+			lastReadMs = now;
+			float temp = 0.0f;
+			float rh   = 0.0f;
+
+			err = readSensor(addr, &temp, &rh);
+			if (err == ESP_OK) {
+				printf("{\"temperature\": %.1f, \"humidity\": %.1f}\n", temp, rh);
+				updateValve(temp);
+				updateFan(rh);
+				lastTemp = temp;
+				lastRh = rh;
+				haveReading = true;
 			} else {
-				ESP_LOGW(TAG, "Wi-Fi not connected; skipping upload");
+				ESP_LOGW(TAG, "Read failed: %s", esp_err_to_name(err));
 			}
-			lastUploadMs = now;
+
+			if (haveReading && (now - lastUploadMs) >= UPLOAD_INTERVAL_MS) {
+				if (wifiConnected()) {
+					err = postReading(lastTemp, lastRh, g_valveOn, g_fanOn);
+					if (err != ESP_OK) {
+						ESP_LOGW(TAG, "Upload failed: %s", esp_err_to_name(err));
+					}
+				} else {
+					ESP_LOGW(TAG, "Wi-Fi not connected; skipping upload");
+				}
+				lastUploadMs = now;
+			}
 		}
 
-		vTaskDelay(pdMS_TO_TICKS(READ_INTERVAL_MS));
+		vTaskDelay(pdMS_TO_TICKS(TICK_MS));
 	}
 }
