@@ -19,6 +19,6 @@ Runtime credentials are kept out of Git in `include/secrets.h`.
 To recreate the local secrets file:
 
 1. Copy `include/secrets.example.h` to `include/secrets.h`.
-2. Replace the placeholder values for `WIFI_SSID`, `WIFI_PASS`, and `AZURE_FN_KEY`.
+2. Replace the placeholder values for `WIFI_SSID`, `WIFI_PASS`, `AZURE_FN_KEY`, `AZURE_FN_FAN_EVENT_KEY`, and `AZURE_FN_SPRAY_EVENT_KEY`. Each Azure Function has its own function-level key, so the fan/spray event uploads need their own keys rather than reusing `AZURE_FN_KEY`.
 
 `include/secrets.h` is ignored by Git, while `include/secrets.example.h` is tracked as the safe template.

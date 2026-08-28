@@ -536,7 +536,7 @@ static void makeTimestamp(char *out, size_t outLen)
 	formatTimestamp(time(NULL), out, outLen);
 }
 
-static esp_err_t sendJsonPost(const char *url, const char *payload, int payloadLen)
+static esp_err_t sendJsonPost(const char *url, const char *key, const char *payload, int payloadLen)
 {
 	esp_http_client_config_t cfg = {
 		.url = url,
@@ -551,7 +551,7 @@ static esp_err_t sendJsonPost(const char *url, const char *payload, int payloadL
 	}
 
 	esp_http_client_set_header(client, "Content-Type", "application/json");
-	esp_http_client_set_header(client, "x-functions-key", AZURE_FN_KEY);
+	esp_http_client_set_header(client, "x-functions-key", key);
 	esp_http_client_set_post_field(client, payload, payloadLen);
 
 	esp_err_t err = esp_http_client_perform(client);
@@ -591,7 +591,7 @@ static esp_err_t postReading(float temp, float rh, bool valveOn, bool fanOn)
 		return ESP_ERR_INVALID_SIZE;
 	}
 
-	return sendJsonPost(AZURE_FN_URL, payload, payloadLen);
+	return sendJsonPost(AZURE_FN_URL, AZURE_FN_KEY, payload, payloadLen);
 }
 
 static esp_err_t postFanEvent(
@@ -621,7 +621,7 @@ static esp_err_t postFanEvent(
 		return ESP_ERR_INVALID_SIZE;
 	}
 
-	return sendJsonPost(AZURE_FN_FAN_EVENT_URL, payload, payloadLen);
+	return sendJsonPost(AZURE_FN_FAN_EVENT_URL, AZURE_FN_FAN_EVENT_KEY, payload, payloadLen);
 }
 
 static esp_err_t postSprayEvent(
@@ -654,7 +654,7 @@ static esp_err_t postSprayEvent(
 		return ESP_ERR_INVALID_SIZE;
 	}
 
-	return sendJsonPost(AZURE_FN_SPRAY_EVENT_URL, payload, payloadLen);
+	return sendJsonPost(AZURE_FN_SPRAY_EVENT_URL, AZURE_FN_SPRAY_EVENT_KEY, payload, payloadLen);
 }
 
 // Called when the fan transitions off. Reports the fan-on window (with the
