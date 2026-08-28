@@ -8,6 +8,9 @@ ESP32 firmware that reads temperature (Celsius) and relative humidity (RH, %) fr
 - Valve opens above 25C, closes at/below 23C. A run that hits the 5-minute cap and ends because the target was reached triggers a 10-minute cooldown, during which the valve is locked off.
 - Fan starts above 70% RH, stops at/below 60% RH. A run that hits the 5-minute cap *without* reaching the target is force-stopped and triggers the same 10-minute cooldown.
 - Current temperature, humidity, valve state, and fan state are POSTed every 60 s. Wi-Fi loss only disables uploads — local sensing and relay control keep running.
+- Each fan run posts a fan event on stop, with the temperature/humidity/timestamp captured at start and stop.
+- Each valve run posts a spray event on close, with the temperature/humidity/timestamp captured at open and close, plus the water volume used. Water volume is a placeholder that always reports 0mL until flow metering is implemented.
+- Fan and spray events are skipped (not queued) if Wi-Fi is down when the run ends.
 
 ## Local Secrets
 

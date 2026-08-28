@@ -60,7 +60,10 @@
 #define WIFI_FAIL_BIT BIT1
 #define WIFI_MAX_RETRY 10
 
-#define AZURE_FN_URL "https://fn-greenhouse-djcuazgkefd8b3c8.centralus-01.azurewebsites.net/api/fnpost"
+#define AZURE_FN_BASE_URL "https://fn-greenhouse-djcuazgkefd8b3c8.centralus-01.azurewebsites.net/api/"
+#define AZURE_FN_URL             AZURE_FN_BASE_URL "fnpost"
+#define AZURE_FN_FAN_EVENT_URL   AZURE_FN_BASE_URL "fan-events"
+#define AZURE_FN_SPRAY_EVENT_URL AZURE_FN_BASE_URL "spray-events"
 
 // SHTC3 commands (MSB first)
 #define CMD_WAKEUP  0x3517
@@ -77,10 +80,23 @@ static int g_wifiRetry;
 static bool g_valveOn;
 static int64_t g_valveOnSinceMs;
 static int64_t g_valveCooldownUntilMs;
+static float g_valveEventStartTemp;
+static float g_valveEventStartRh;
+static time_t g_valveEventStartTime;
+
+// Volume dispensed while the valve is open. No flow meter is wired up yet,
+// so every spray event is currently reported with 0mL; wire up real metering later.
+static float g_sprayWaterUsedMl = 0.0f;
 
 static bool g_fanOn;
 static int64_t g_fanOnSinceMs;
 static int64_t g_fanCooldownUntilMs;
+static float g_fanEventStartTemp;
+static float g_fanEventStartRh;
+static time_t g_fanEventStartTime;
+
+static void reportFanEvent(float endTemp, float endRh);
+static void reportSprayEvent(float endTemp, float endRh);
 
 static int64_t nowMs(void)
 {
@@ -280,7 +296,7 @@ static esp_err_t readSensor(uint8_t addr, float *temp, float *rh)
 // Opens above 25C, closes at/below 23C. A run capped at 5 minutes that ends
 // because the target was reached forces a 10 minute cooldown before the valve
 // may open again, guarding against a relay stuck cycling near the threshold.
-static void updateValve(float temp)
+static void updateValve(float temp, float rh)
 {
 	int64_t now = nowMs();
 
@@ -297,17 +313,23 @@ static void updateValve(float temp)
 			bool ranFullDuration = (now - g_valveOnSinceMs) >= ACTUATOR_MAX_ON_MS;
 			setValveRelay(false);
 			g_valveOn = false;
+			updateActuatorLeds(now);
 			if (ranFullDuration) {
 				g_valveCooldownUntilMs = now + ACTUATOR_COOLDOWN_MS;
 				ESP_LOGI(TAG, "Valve reached %.1fC after max on-time; closing and starting 10 min cooldown", temp);
 			} else {
 				ESP_LOGI(TAG, "Temperature %.1fC <= %.1fC; closing valve", temp, TEMP_VALVE_OFF_C);
 			}
+			reportSprayEvent(temp, rh);
 		}
 	} else if (temp > TEMP_VALVE_ON_C) {
 		setValveRelay(true);
 		g_valveOn = true;
+		updateActuatorLeds(now);
 		g_valveOnSinceMs = now;
+		g_valveEventStartTemp = temp;
+		g_valveEventStartRh = rh;
+		g_valveEventStartTime = time(NULL);
 		ESP_LOGI(TAG, "Temperature %.1fC > %.1fC; opening valve", temp, TEMP_VALVE_ON_C);
 	}
 }
@@ -315,7 +337,7 @@ static void updateValve(float temp)
 // Runs above 70%RH, stops at/below 60%RH. If 5 minutes pass without reaching
 // the target, the fan is force-stopped and locked off for a 10 minute
 // cooldown, guarding against a fan running indefinitely to no effect.
-static void updateFan(float rh)
+static void updateFan(float temp, float rh)
 {
 	int64_t now = nowMs();
 
@@ -331,17 +353,25 @@ static void updateFan(float rh)
 		if (rh <= RH_FAN_OFF_PCT) {
 			setFanRelay(false);
 			g_fanOn = false;
+			updateActuatorLeds(now);
 			ESP_LOGI(TAG, "Humidity %.1f%% <= %.1f%%; stopping fan", rh, RH_FAN_OFF_PCT);
+			reportFanEvent(temp, rh);
 		} else if ((now - g_fanOnSinceMs) >= ACTUATOR_MAX_ON_MS) {
 			setFanRelay(false);
 			g_fanOn = false;
+			updateActuatorLeds(now);
 			g_fanCooldownUntilMs = now + ACTUATOR_COOLDOWN_MS;
 			ESP_LOGI(TAG, "Fan exceeded max on-time without reaching %.1f%%RH; stopping and starting 10 min cooldown", RH_FAN_OFF_PCT);
+			reportFanEvent(temp, rh);
 		}
 	} else if (rh > RH_FAN_ON_PCT) {
 		setFanRelay(true);
 		g_fanOn = true;
+		updateActuatorLeds(now);
 		g_fanOnSinceMs = now;
+		g_fanEventStartTemp = temp;
+		g_fanEventStartRh = rh;
+		g_fanEventStartTime = time(NULL);
 		ESP_LOGI(TAG, "Humidity %.1f%% > %.1f%%; starting fan", rh, RH_FAN_ON_PCT);
 	}
 }
@@ -494,36 +524,22 @@ static bool wifiConnected(void)
 	return g_wifiEvents != NULL && (xEventGroupGetBits(g_wifiEvents) & WIFI_CONNECTED_BIT) != 0;
 }
 
-static void makeTimestamp(char *out, size_t outLen)
+static void formatTimestamp(time_t t, char *out, size_t outLen)
 {
-	time_t now = time(NULL);
 	struct tm tmUtc = {0};
-	gmtime_r(&now, &tmUtc);
+	gmtime_r(&t, &tmUtc);
 	strftime(out, outLen, "%Y-%m-%dT%H:%M:%SZ", &tmUtc);
 }
 
-static esp_err_t postReading(float temp, float rh, bool valveOn, bool fanOn)
+static void makeTimestamp(char *out, size_t outLen)
 {
-	char timestamp[32] = {0};
-	makeTimestamp(timestamp, sizeof(timestamp));
+	formatTimestamp(time(NULL), out, outLen);
+}
 
-	char payload[192] = {0};
-	int payloadLen = snprintf(
-		payload,
-		sizeof(payload),
-		"{\"temperature\":%.1f,\"humidity\":%.1f,\"valveOn\":%s,\"fanOn\":%s,\"timestamp\":\"%s\"}",
-		temp,
-		rh,
-		valveOn ? "true" : "false",
-		fanOn ? "true" : "false",
-		timestamp);
-
-	if (payloadLen <= 0 || payloadLen >= (int)sizeof(payload)) {
-		return ESP_ERR_INVALID_SIZE;
-	}
-
+static esp_err_t sendJsonPost(const char *url, const char *payload, int payloadLen)
+{
 	esp_http_client_config_t cfg = {
-		.url = AZURE_FN_URL,
+		.url = url,
 		.method = HTTP_METHOD_POST,
 		.timeout_ms = 10000,
 		.crt_bundle_attach = esp_crt_bundle_attach,
@@ -548,11 +564,134 @@ static esp_err_t postReading(float temp, float rh, bool valveOn, bool fanOn)
 	esp_http_client_cleanup(client);
 
 	if (statusCode < 200 || statusCode >= 300) {
-		ESP_LOGW(TAG, "Azure Function returned HTTP %d", statusCode);
+		ESP_LOGW(TAG, "Azure Function %s returned HTTP %d", url, statusCode);
 		return ESP_FAIL;
 	}
 
 	return ESP_OK;
+}
+
+static esp_err_t postReading(float temp, float rh, bool valveOn, bool fanOn)
+{
+	char timestamp[32] = {0};
+	makeTimestamp(timestamp, sizeof(timestamp));
+
+	char payload[192] = {0};
+	int payloadLen = snprintf(
+		payload,
+		sizeof(payload),
+		"{\"temperature\":%.1f,\"humidity\":%.1f,\"valveOn\":%s,\"fanOn\":%s,\"timestamp\":\"%s\"}",
+		temp,
+		rh,
+		valveOn ? "true" : "false",
+		fanOn ? "true" : "false",
+		timestamp);
+
+	if (payloadLen <= 0 || payloadLen >= (int)sizeof(payload)) {
+		return ESP_ERR_INVALID_SIZE;
+	}
+
+	return sendJsonPost(AZURE_FN_URL, payload, payloadLen);
+}
+
+static esp_err_t postFanEvent(
+	float startTemp, float startRh, time_t startTime,
+	float endTemp, float endRh, time_t endTime)
+{
+	char startTimestamp[32] = {0};
+	char endTimestamp[32] = {0};
+	formatTimestamp(startTime, startTimestamp, sizeof(startTimestamp));
+	formatTimestamp(endTime, endTimestamp, sizeof(endTimestamp));
+
+	char payload[256] = {0};
+	int payloadLen = snprintf(
+		payload,
+		sizeof(payload),
+		"{\"startTemperature\":%.1f,\"endTemperature\":%.1f,"
+		"\"startHumidity\":%.1f,\"endHumidity\":%.1f,"
+		"\"startDate\":\"%s\",\"endDate\":\"%s\"}",
+		startTemp,
+		endTemp,
+		startRh,
+		endRh,
+		startTimestamp,
+		endTimestamp);
+
+	if (payloadLen <= 0 || payloadLen >= (int)sizeof(payload)) {
+		return ESP_ERR_INVALID_SIZE;
+	}
+
+	return sendJsonPost(AZURE_FN_FAN_EVENT_URL, payload, payloadLen);
+}
+
+static esp_err_t postSprayEvent(
+	float startTemp, float startRh, time_t startTime,
+	float endTemp, float endRh, time_t endTime,
+	float waterUsedMl)
+{
+	char startTimestamp[32] = {0};
+	char endTimestamp[32] = {0};
+	formatTimestamp(startTime, startTimestamp, sizeof(startTimestamp));
+	formatTimestamp(endTime, endTimestamp, sizeof(endTimestamp));
+
+	char payload[288] = {0};
+	int payloadLen = snprintf(
+		payload,
+		sizeof(payload),
+		"{\"startTemperature\":%.1f,\"endTemperature\":%.1f,"
+		"\"startHumidity\":%.1f,\"endHumidity\":%.1f,"
+		"\"startDate\":\"%s\",\"endDate\":\"%s\","
+		"\"waterUsedMilliliters\":%.1f}",
+		startTemp,
+		endTemp,
+		startRh,
+		endRh,
+		startTimestamp,
+		endTimestamp,
+		waterUsedMl);
+
+	if (payloadLen <= 0 || payloadLen >= (int)sizeof(payload)) {
+		return ESP_ERR_INVALID_SIZE;
+	}
+
+	return sendJsonPost(AZURE_FN_SPRAY_EVENT_URL, payload, payloadLen);
+}
+
+// Called when the fan transitions off. Reports the fan-on window (with the
+// temp/humidity captured when it started and the current reading as the end)
+// to the backend. Silently skipped when Wi-Fi is down, matching the
+// local-first behavior of the periodic sensor upload.
+static void reportFanEvent(float endTemp, float endRh)
+{
+	if (!wifiConnected()) {
+		ESP_LOGW(TAG, "Wi-Fi not connected; skipping fan event upload");
+		return;
+	}
+
+	esp_err_t err = postFanEvent(
+		g_fanEventStartTemp, g_fanEventStartRh, g_fanEventStartTime,
+		endTemp, endRh, time(NULL));
+	if (err != ESP_OK) {
+		ESP_LOGW(TAG, "Fan event upload failed: %s", esp_err_to_name(err));
+	}
+}
+
+// Called when the valve transitions closed. See reportFanEvent for the
+// Wi-Fi-down behavior.
+static void reportSprayEvent(float endTemp, float endRh)
+{
+	if (!wifiConnected()) {
+		ESP_LOGW(TAG, "Wi-Fi not connected; skipping spray event upload");
+		return;
+	}
+
+	esp_err_t err = postSprayEvent(
+		g_valveEventStartTemp, g_valveEventStartRh, g_valveEventStartTime,
+		endTemp, endRh, time(NULL),
+		g_sprayWaterUsedMl);
+	if (err != ESP_OK) {
+		ESP_LOGW(TAG, "Spray event upload failed: %s", esp_err_to_name(err));
+	}
 }
 
 void app_main(void)
@@ -604,8 +743,8 @@ void app_main(void)
 			err = readSensor(addr, &temp, &rh);
 			if (err == ESP_OK) {
 				printf("{\"temperature\": %.1f, \"humidity\": %.1f}\n", temp, rh);
-				updateValve(temp);
-				updateFan(rh);
+				updateValve(temp, rh);
+				updateFan(temp, rh);
 				lastTemp = temp;
 				lastRh = rh;
 				haveReading = true;
